@@ -55,6 +55,7 @@ Lee CLAUDE.md. Fase 4:
 - Alerta MITM (crítica) si el conflicto es sobre el gateway o una MAC reclama varias IPs.
 - Las alertas se guardan con hora y detalle; no repetir la misma alerta en 60 s.
 Pruebas a mostrar: pytest -v, alertas de arp_spoof.pcap y confirmar 0 alertas en normal.pcap.
+Extra: en conversation_key ordena las IPs numéricamente con ipaddress, no como texto.
 ```
 
 ## Fase 5 — Escaneo de puertos (RF9)

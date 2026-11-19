@@ -8,6 +8,8 @@ from typing import Callable
 from scapy.all import IPv6
 
 from netwatch.capture.packet import PacketInfo, normalize
+from netwatch.analyzers.alerts import Alert, Deduplicator
+from netwatch.analyzers.arp_spoof import ArpSpoofDetector
 from netwatch.analyzers.conversations import conversation_key
 from netwatch.analyzers.ip_mac import ip_mac_pair
 from netwatch.capture.sources import file_source
@@ -21,8 +23,11 @@ DISCARD_NO_IP = "sin IP (otros)"
 
 class Pipeline:
     def __init__(self, networks: list[str], on_packet: Callable[[PacketInfo], None] | None = None,
-                 repo: Repository | None = None, session_id: int | None = None):
+                 repo: Repository | None = None, session_id: int | None = None, gateway: str | None = None):
         self.networks = networks
+        self.arp_detector = ArpSpoofDetector(gateway)
+        self.dedup = Deduplicator()
+        self.alerts: list[Alert] = []
         self.on_packet = on_packet
         self.repo = repo
         self.session_id = session_id
@@ -48,11 +53,20 @@ class Pipeline:
             self.discarded[reason] += 1
             return None
         self.protocols[info.protocol] += 1
+        for alert in self.arp_detector.process(info):
+            self._raise(alert)
         if self.repo:
             self._store(info)
         if self.on_packet:
             self.on_packet(info)
         return info
+
+    def _raise(self, alert: Alert) -> None:
+        if not self.dedup.allow(alert):
+            return
+        self.alerts.append(alert)
+        if self.repo:
+            self.repo.add_alert(self.session_id, alert.ts, alert.type, alert.severity, alert.detail)
 
     def _store(self, info: PacketInfo) -> None:
         self.repo.add_packet(self.session_id, info)
@@ -71,6 +85,7 @@ class Pipeline:
             "discarded_by_reason": {r: self.discarded[r] for r in (DISCARD_IPV6, DISCARD_OUT_OF_SCOPE, DISCARD_NO_IP)},
             "analyzed": self.total - discarded,
             "protocols": dict(self.protocols.most_common()),
+            "alerts": len(self.alerts),
             "session_id": self.session_id,
         }
 
@@ -82,9 +97,9 @@ class Pipeline:
 
 
 def analyze_file(path: Path, networks: list[str], on_packet: Callable | None = None,
-                 repo: Repository | None = None) -> dict:
+                 repo: Repository | None = None, gateway: str | None = None) -> dict:
     session_id = repo.create_session("file", path.name) if repo else None
-    pipeline = Pipeline(networks, on_packet, repo, session_id)
+    pipeline = Pipeline(networks, on_packet, repo, session_id, gateway)
     for pkt in file_source(path):
         pipeline.handle(pkt)
     return pipeline.finish()

@@ -182,6 +182,18 @@ class Repository:
                 "SELECT * FROM ip_mac WHERE session_id = ? ORDER BY ip, first_seen", (session_id,))
             return [dict(r) for r in rows]
 
+    # --- alerts (RF12) ---
+    def add_alert(self, session_id: int, ts: float, type_: str, severity: str, detail: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO alerts (session_id, ts, type, severity, detail) VALUES (?, ?, ?, ?, ?)",
+                (session_id, ts, type_, severity, detail))
+
+    def alerts(self, session_id: int) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM alerts WHERE session_id = ? ORDER BY ts, id", (session_id,))
+            return [dict(r) for r in rows]
+
     # --- misc ---
     def table_counts(self) -> dict:
         with self._lock:

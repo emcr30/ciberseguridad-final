@@ -82,6 +82,11 @@ def _print_report(repo, session_id: int) -> None:
         first = time.strftime("%H:%M:%S", time.localtime(r["first_seen"]))
         last = time.strftime("%H:%M:%S", time.localtime(r["last_seen"]))
         print(f"  {r['ip']:<16} {r['mac']:<18} {first:<12} {last}")
+    alerts = repo.alerts(session_id)
+    print(f"\nAlertas: {len(alerts)}")
+    for a in alerts:
+        hour = time.strftime("%H:%M:%S", time.localtime(a["ts"]))
+        print(f"  [{hour}] {a['severity'].upper():<8} {a['type']:<13} {a['detail']}")
 
 
 def _print_summary(summary: dict) -> None:
@@ -129,7 +134,8 @@ def cmd_analyze(args) -> None:
         print(f"Paquetes analizados (máx. {VERBOSE_LIMIT}):")
     repo = Repository()
     try:
-        summary = analyze_file(path, networks, _packet_printer(args.verbose), repo)
+        gateway = config.load_settings()["gateway"]
+        summary = analyze_file(path, networks, _packet_printer(args.verbose), repo, gateway)
         if args.verbose:
             print()
         _print_summary(summary)
@@ -146,7 +152,8 @@ def cmd_capture(args) -> None:
 
     networks = _require_networks()
     repo = Repository()
-    pipeline = Pipeline(networks, _packet_printer(args.verbose), repo, repo.create_session("live", args.iface))
+    pipeline = Pipeline(networks, _packet_printer(args.verbose), repo, repo.create_session("live", args.iface),
+                        config.load_settings()["gateway"])
     source = LiveSource(args.iface, pipeline.handle)
     try:
         source.start()
