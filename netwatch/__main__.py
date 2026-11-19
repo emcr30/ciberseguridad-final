@@ -82,6 +82,15 @@ def _print_report(repo, session_id: int) -> None:
         first = time.strftime("%H:%M:%S", time.localtime(r["first_seen"]))
         last = time.strftime("%H:%M:%S", time.localtime(r["last_seen"]))
         print(f"  {r['ip']:<16} {r['mac']:<18} {first:<12} {last}")
+    creds = repo.credentials(session_id)
+    print(f"\nCredenciales en texto plano: {len(creds)}")
+    if creds:
+        print(f"  {'HORA':<9} {'PROTOCOLO':<11} {'ORIGEN':<16} {'DESTINO':<22} {'USUARIO':<12} CONTRASEÑA")
+    for c in creds:
+        hour = time.strftime("%H:%M:%S", time.localtime(c["ts"]))
+        dst = f"{c['dst_ip']}:{c['dport']}"
+        print(f"  {hour:<9} {c['protocol']:<11} {c['src_ip']:<16} {dst:<22} {c['username'] or '-':<12} "
+              f"{c['password_masked']}")
     alerts = repo.alerts(session_id)
     print(f"\nAlertas: {len(alerts)}")
     for a in alerts:

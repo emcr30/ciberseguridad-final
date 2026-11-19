@@ -94,6 +94,11 @@ def creds() -> list:
                            b"Content-Type: application/x-www-form-urlencoded\r\n"
                            b"Content-Length: " + str(len(form)).encode() + b"\r\n\r\n" + form),
         s(80, 41002, "PA", b"HTTP/1.1 302 Found\r\n\r\n"),
+        # POP3
+        c(41003, 110, "S"), s(110, 41003, "SA"), c(41003, 110, "A"),
+        s(110, 41003, "PA", b"+OK POP3 ready\r\n"),
+        c(41003, 110, "PA", b"USER bob\r\n"), s(110, 41003, "PA", b"+OK\r\n"),
+        c(41003, 110, "PA", b"PASS Correo2024\r\n"), s(110, 41003, "PA", b"+OK logged in\r\n"),
     ]
     return _stamp(pkts, step=0.2)
 

@@ -199,6 +199,20 @@ class Repository:
             rows = self.conn.execute("SELECT * FROM alerts WHERE session_id = ? ORDER BY ts, id", (session_id,))
             return [dict(r) for r in rows]
 
+    # --- credentials (RF5): only the masked password is stored ---
+    def add_credential(self, session_id: int, cred) -> None:
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO credentials (session_id, ts, protocol, src_ip, dst_ip, dport, username, password_masked)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (session_id, cred.ts, cred.protocol, cred.src_ip, cred.dst_ip, cred.dport,
+                 cred.username, cred.password_masked))
+
+    def credentials(self, session_id: int) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM credentials WHERE session_id = ? ORDER BY ts, id", (session_id,))
+            return [dict(r) for r in rows]
+
     # --- misc ---
     def table_counts(self) -> dict:
         with self._lock:

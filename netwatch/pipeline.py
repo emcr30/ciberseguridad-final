@@ -10,6 +10,7 @@ from scapy.all import IPv6
 from netwatch.analyzers.alerts import Alert, Deduplicator
 from netwatch.analyzers.arp_spoof import ArpSpoofDetector
 from netwatch.analyzers.conversations import conversation_key
+from netwatch.analyzers.credentials import CredentialDetector
 from netwatch.analyzers.ip_mac import ip_mac_pair
 from netwatch.analyzers.port_scan import PortScanDetector
 from netwatch.capture.packet import PacketInfo, normalize
@@ -27,6 +28,8 @@ class Pipeline:
                  repo: Repository | None = None, session_id: int | None = None, gateway: str | None = None):
         self.networks = networks
         self.detectors = [ArpSpoofDetector(gateway), PortScanDetector()]
+        self.cred_detector = CredentialDetector()
+        self.credentials = 0
         self.dedup = Deduplicator()
         self.alerts: list[Alert] = []
         self.on_packet = on_packet
@@ -57,6 +60,11 @@ class Pipeline:
         for detector in self.detectors:
             for alert in detector.process(info):
                 self._raise(alert)
+        for cred in self.cred_detector.process(info):
+            self.credentials += 1
+            if self.repo:
+                self.repo.add_credential(self.session_id, cred)
+            self._raise(cred.to_alert())
         if self.repo:
             self._store(info)
         if self.on_packet:
@@ -94,6 +102,7 @@ class Pipeline:
             "analyzed": self.total - discarded,
             "protocols": dict(self.protocols.most_common()),
             "alerts": len(self.alerts),
+            "credentials": self.credentials,
             "session_id": self.session_id,
         }
 
