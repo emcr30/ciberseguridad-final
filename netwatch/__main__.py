@@ -5,6 +5,7 @@ import argparse
 import ctypes
 import os
 import sys
+import time
 from pathlib import Path
 
 from netwatch import config
@@ -21,11 +22,16 @@ def has_capture_privileges() -> bool:
 
 
 def cmd_interfaces(_args) -> None:
-    from scapy.all import get_if_list
+    from scapy.all import conf
 
-    print("Interfaces disponibles:")
-    for name in get_if_list():
-        print(f"  - {name}")
+    from netwatch.scope import in_scope
+
+    networks = config.load_settings()["networks"]
+    print("Interfaces disponibles (* = IP dentro de una red de laboratorio declarada):")
+    print(f"    {'NOMBRE':<10} {'IP':<16} MAC")
+    for iface in conf.ifaces.values():
+        mark = "*" if in_scope(iface.ip, networks) else " "
+        print(f"  {mark} {iface.name:<10} {iface.ip or '-':<16} {iface.mac or '-'}")
     if has_capture_privileges():
         print("Privilegios de captura: SÍ")
     else:
@@ -59,11 +65,34 @@ def _require_networks() -> list[str]:
 
 def _print_summary(summary: dict) -> None:
     print(f"Total de paquetes:  {summary['total']}")
-    print(f"Descartados (fuera de las redes de laboratorio): {summary['discarded']}")
+    print(f"Descartados: {summary['discarded']}")
+    for reason, count in summary["discarded_by_reason"].items():
+        print(f"  {reason:<40} {count}")
     print(f"Analizados: {summary['analyzed']}")
     print("Por protocolo:" + ("" if summary["protocols"] else " (ninguno)"))
     for proto, count in summary["protocols"].items():
         print(f"  {proto:<8} {count}")
+
+
+VERBOSE_LIMIT = 20
+
+
+def _packet_printer(enabled: bool):
+    """Return an on_packet callback printing up to VERBOSE_LIMIT packets (no payload)."""
+    if not enabled:
+        return None
+    printed = [0]
+
+    def show(info) -> None:
+        if printed[0] >= VERBOSE_LIMIT:
+            return
+        printed[0] += 1
+        hour = time.strftime("%H:%M:%S", time.localtime(info.ts)) + f".{int(info.ts % 1 * 1000):03d}"
+        src = f"{info.src_ip}:{info.sport}" if info.sport is not None else info.src_ip
+        dst = f"{info.dst_ip}:{info.dport}" if info.dport is not None else info.dst_ip
+        print(f"  {hour}  {info.protocol:<6} {src} → {dst}")
+
+    return show
 
 
 def cmd_analyze(args) -> None:
@@ -73,16 +102,20 @@ def cmd_analyze(args) -> None:
     if not path.is_file():
         print(f"Error: no existe el archivo {path}")
         sys.exit(1)
-    _print_summary(analyze_file(path, _require_networks()))
+    networks = _require_networks()
+    if args.verbose:
+        print(f"Paquetes analizados (máx. {VERBOSE_LIMIT}):")
+    summary = analyze_file(path, networks, _packet_printer(args.verbose))
+    if args.verbose:
+        print()
+    _print_summary(summary)
 
 
 def cmd_capture(args) -> None:
-    import time
-
     from netwatch.capture.sources import LiveSource
     from netwatch.pipeline import Pipeline
 
-    pipeline = Pipeline(_require_networks())
+    pipeline = Pipeline(_require_networks(), _packet_printer(args.verbose))
     source = LiveSource(args.iface, pipeline.handle)
     try:
         source.start()
@@ -96,6 +129,7 @@ def cmd_capture(args) -> None:
         pass
     finally:
         source.stop()
+    print()
     _print_summary(pipeline.summary())
 
 
@@ -113,11 +147,13 @@ def main() -> None:
 
     p_an = sub.add_parser("analyze", help="Analizar un archivo .pcap")
     p_an.add_argument("file")
+    p_an.add_argument("-v", "--verbose", action="store_true", help=f"Mostrar hasta {VERBOSE_LIMIT} paquetes")
     p_an.set_defaults(func=cmd_analyze)
 
     p_cap = sub.add_parser("capture", help="Captura en vivo (requiere privilegios)")
     p_cap.add_argument("-i", "--iface", required=True)
     p_cap.add_argument("-t", "--seconds", type=int, default=30)
+    p_cap.add_argument("-v", "--verbose", action="store_true", help=f"Mostrar hasta {VERBOSE_LIMIT} paquetes")
     p_cap.set_defaults(func=cmd_capture)
 
     args = parser.parse_args()

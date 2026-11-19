@@ -18,7 +18,8 @@ class LiveSource:
 
     def __init__(self, iface: str, callback: Callable):
         self.iface = iface
-        self._sniffer = AsyncSniffer(iface=iface, prn=callback, store=False)
+        # Scapy prints whatever `prn` returns, so the wrapper always returns None.
+        self._sniffer = AsyncSniffer(iface=iface, prn=lambda pkt: callback(pkt) and None, store=False)
 
     def start(self) -> None:
         try:
