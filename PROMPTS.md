@@ -44,6 +44,7 @@ Pruebas a mostrar: pytest -v y un analyze seguido de un conteo de filas por tabl
 ```
 Lee CLAUDE.md. Fase 3: analizador de conversaciones (paquetes y bytes por par de IPs) y tabla IP↔MAC (desde ARP e IP). Conectarlos al flujo.
 Pruebas a mostrar: pytest -v, top 5 conversaciones y la tabla IP-MAC de normal.pcap.
+Extra: config --add-network debe aceptar también redes IPv6 (por ejemplo fd00::/64), y el filtro de alcance debe funcionar igual para IPv4 e IPv6.
 ```
 
 ## Fase 4 — ARP spoofing y MITM (RF7, RF8, RF12)

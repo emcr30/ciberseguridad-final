@@ -63,6 +63,27 @@ def _require_networks() -> list[str]:
     return networks
 
 
+def _print_report(repo, session_id: int) -> None:
+    print("\nTop 5 conversaciones:")
+    convs = repo.top_conversations(session_id, 5)
+    if not convs:
+        print("  (ninguna)")
+    else:
+        print(f"  {'IP A':<16}    {'IP B':<16} {'PAQUETES':>8} {'BYTES':>8}")
+    for c in convs:
+        print(f"  {c['ip_a']:<16} ↔  {c['ip_b']:<16} {c['packets']:>8} {c['bytes']:>8}")
+    print("\nTabla IP ↔ MAC:")
+    rows = repo.ip_mac_table(session_id)
+    if not rows:
+        print("  (vacía)")
+    else:
+        print(f"  {'IP':<16} {'MAC':<18} {'PRIMERA VEZ':<12} ÚLTIMA VEZ")
+    for r in rows:
+        first = time.strftime("%H:%M:%S", time.localtime(r["first_seen"]))
+        last = time.strftime("%H:%M:%S", time.localtime(r["last_seen"]))
+        print(f"  {r['ip']:<16} {r['mac']:<18} {first:<12} {last}")
+
+
 def _print_summary(summary: dict) -> None:
     print(f"Total de paquetes:  {summary['total']}")
     print(f"Descartados: {summary['discarded']}")
@@ -96,6 +117,7 @@ def _packet_printer(enabled: bool):
 
 
 def cmd_analyze(args) -> None:
+    from netwatch.db.repository import DB_FILE, Repository
     from netwatch.pipeline import analyze_file
 
     path = Path(args.file)
@@ -105,21 +127,32 @@ def cmd_analyze(args) -> None:
     networks = _require_networks()
     if args.verbose:
         print(f"Paquetes analizados (máx. {VERBOSE_LIMIT}):")
-    summary = analyze_file(path, networks, _packet_printer(args.verbose))
-    if args.verbose:
-        print()
-    _print_summary(summary)
+    repo = Repository()
+    try:
+        summary = analyze_file(path, networks, _packet_printer(args.verbose), repo)
+        if args.verbose:
+            print()
+        _print_summary(summary)
+        _print_report(repo, summary["session_id"])
+    finally:
+        repo.close()
+    print(f"\nSesión #{summary['session_id']} guardada en {DB_FILE}")
 
 
 def cmd_capture(args) -> None:
     from netwatch.capture.sources import LiveSource
+    from netwatch.db.repository import DB_FILE, Repository
     from netwatch.pipeline import Pipeline
 
-    pipeline = Pipeline(_require_networks(), _packet_printer(args.verbose))
+    networks = _require_networks()
+    repo = Repository()
+    pipeline = Pipeline(networks, _packet_printer(args.verbose), repo, repo.create_session("live", args.iface))
     source = LiveSource(args.iface, pipeline.handle)
     try:
         source.start()
     except RuntimeError as exc:
+        pipeline.finish()
+        repo.close()
         print(f"Error: {exc}")
         sys.exit(1)
     print(f"Capturando en {args.iface} durante {args.seconds} s (Ctrl+C para detener)...")
@@ -129,8 +162,23 @@ def cmd_capture(args) -> None:
         pass
     finally:
         source.stop()
+    summary = pipeline.finish()
     print()
-    _print_summary(pipeline.summary())
+    _print_summary(summary)
+    _print_report(repo, summary["session_id"])
+    repo.close()
+    print(f"\nSesión #{summary['session_id']} guardada en {DB_FILE}")
+
+
+def cmd_db(_args) -> None:
+    from netwatch.db.repository import DB_FILE, Repository
+
+    repo = Repository()
+    print(f"Base de datos: {DB_FILE}")
+    print("Filas por tabla:")
+    for table, count in repo.table_counts().items():
+        print(f"  {table:<14} {count}")
+    repo.close()
 
 
 def main() -> None:
@@ -155,6 +203,8 @@ def main() -> None:
     p_cap.add_argument("-t", "--seconds", type=int, default=30)
     p_cap.add_argument("-v", "--verbose", action="store_true", help=f"Mostrar hasta {VERBOSE_LIMIT} paquetes")
     p_cap.set_defaults(func=cmd_capture)
+
+    sub.add_parser("db", help="Mostrar filas por tabla en la base de datos").set_defaults(func=cmd_db)
 
     args = parser.parse_args()
     print(WARNING, end="\n\n")
