@@ -15,6 +15,7 @@ class Alert:
     severity: str
     subject: str       # what the alert is about (IP or MAC); used to de-duplicate
     detail: str
+    id: int | None = None  # set once stored; later changes to `detail` update that row
 
 
 class Deduplicator:

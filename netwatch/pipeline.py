@@ -7,11 +7,12 @@ from typing import Callable
 
 from scapy.all import IPv6
 
-from netwatch.capture.packet import PacketInfo, normalize
 from netwatch.analyzers.alerts import Alert, Deduplicator
 from netwatch.analyzers.arp_spoof import ArpSpoofDetector
 from netwatch.analyzers.conversations import conversation_key
 from netwatch.analyzers.ip_mac import ip_mac_pair
+from netwatch.analyzers.port_scan import PortScanDetector
+from netwatch.capture.packet import PacketInfo, normalize
 from netwatch.capture.sources import file_source
 from netwatch.db.repository import Repository
 from netwatch.scope import in_scope
@@ -25,7 +26,7 @@ class Pipeline:
     def __init__(self, networks: list[str], on_packet: Callable[[PacketInfo], None] | None = None,
                  repo: Repository | None = None, session_id: int | None = None, gateway: str | None = None):
         self.networks = networks
-        self.arp_detector = ArpSpoofDetector(gateway)
+        self.detectors = [ArpSpoofDetector(gateway), PortScanDetector()]
         self.dedup = Deduplicator()
         self.alerts: list[Alert] = []
         self.on_packet = on_packet
@@ -53,8 +54,9 @@ class Pipeline:
             self.discarded[reason] += 1
             return None
         self.protocols[info.protocol] += 1
-        for alert in self.arp_detector.process(info):
-            self._raise(alert)
+        for detector in self.detectors:
+            for alert in detector.process(info):
+                self._raise(alert)
         if self.repo:
             self._store(info)
         if self.on_packet:
@@ -62,11 +64,17 @@ class Pipeline:
         return info
 
     def _raise(self, alert: Alert) -> None:
+        if alert.id is not None:  # already raised: only its detail changed
+            if self.repo:
+                self.repo.update_alert_detail(alert.id, alert.detail)
+            return
         if not self.dedup.allow(alert):
             return
         self.alerts.append(alert)
         if self.repo:
-            self.repo.add_alert(self.session_id, alert.ts, alert.type, alert.severity, alert.detail)
+            alert.id = self.repo.add_alert(self.session_id, alert.ts, alert.type, alert.severity, alert.detail)
+        else:
+            alert.id = len(self.alerts)
 
     def _store(self, info: PacketInfo) -> None:
         self.repo.add_packet(self.session_id, info)

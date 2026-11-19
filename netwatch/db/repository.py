@@ -183,11 +183,16 @@ class Repository:
             return [dict(r) for r in rows]
 
     # --- alerts (RF12) ---
-    def add_alert(self, session_id: int, ts: float, type_: str, severity: str, detail: str) -> None:
+    def add_alert(self, session_id: int, ts: float, type_: str, severity: str, detail: str) -> int:
         with self._lock:
-            self.conn.execute(
+            cur = self.conn.execute(
                 "INSERT INTO alerts (session_id, ts, type, severity, detail) VALUES (?, ?, ?, ?, ?)",
                 (session_id, ts, type_, severity, detail))
+            return cur.lastrowid
+
+    def update_alert_detail(self, alert_id: int, detail: str) -> None:
+        with self._lock:
+            self.conn.execute("UPDATE alerts SET detail = ? WHERE id = ?", (detail, alert_id))
 
     def alerts(self, session_id: int) -> list[dict]:
         with self._lock:
