@@ -11,7 +11,8 @@ from netwatch.config import DATA_DIR
 
 DB_FILE = DATA_DIR / "netwatch.db"
 MAX_PACKETS = 50_000  # row limit for the packets table (oldest rows are deleted)
-FLUSH_EVERY = 200
+FLUSH_EVERY = 200      # packets
+FLUSH_SECONDS = 1.0    # so a slow live capture still shows up in the panel
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -82,6 +83,7 @@ class Repository:
         self.max_packets = max_packets
         self._lock = threading.Lock()
         self._buffer: list[tuple] = []
+        self._last_flush = time.monotonic()
 
     # --- sessions ---
     def create_session(self, source: str, name: str) -> int:
@@ -91,6 +93,19 @@ class Repository:
                 (source, name, time.time()))
             self.conn.commit()
             return cur.lastrowid
+
+    def latest_session_id(self) -> int | None:
+        with self._lock:
+            return self.conn.execute("SELECT MAX(id) FROM sessions").fetchone()[0]
+
+    def get_session(self, session_id: int) -> dict | None:
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return dict(row) if row else None
+
+    def sessions(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self.conn.execute("SELECT * FROM sessions ORDER BY id DESC LIMIT ?", (limit,))]
 
     def finish_session(self, session_id: int, total: int, discarded: int) -> None:
         self.flush()
@@ -106,8 +121,9 @@ class Repository:
         with self._lock:
             self._buffer.append((session_id, p.ts, p.protocol, p.src_mac, p.dst_mac, p.src_ip,
                                  p.dst_ip, p.sport, p.dport, p.length, p.tcp_flags))
-            full = len(self._buffer) >= FLUSH_EVERY
-        if full:
+            due = (len(self._buffer) >= FLUSH_EVERY
+                   or time.monotonic() - self._last_flush >= FLUSH_SECONDS)
+        if due:
             self.flush()
 
     def flush(self) -> None:
@@ -122,6 +138,7 @@ class Repository:
                     "DELETE FROM packets WHERE id <= (SELECT MAX(id) FROM packets) - ?",
                     (self.max_packets,))
             self.conn.commit()
+            self._last_flush = time.monotonic()
 
     def filter_packets(self, session_id: int | None = None, ip: str | None = None,
                        protocol: str | None = None, port: int | None = None,
@@ -147,6 +164,23 @@ class Repository:
         params.append(limit)
         with self._lock:
             return [dict(r) for r in self.conn.execute(sql, params)]
+
+    # --- stats (RF10) ---
+    def protocol_counts(self, session_id: int) -> dict:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT protocol, COUNT(*) AS n FROM packets WHERE session_id = ? GROUP BY protocol ORDER BY n DESC",
+                (session_id,))
+            return {r["protocol"]: r["n"] for r in rows}
+
+    def packets_per_second(self, session_id: int, last: int = 60) -> list[dict]:
+        """Packets per second (packet time) for the last `last` seconds that have traffic."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT CAST(ts AS INTEGER) AS second, COUNT(*) AS packets FROM packets
+                   WHERE session_id = ? GROUP BY second ORDER BY second DESC LIMIT ?""",
+                (session_id, last))
+            return [dict(r) for r in reversed(rows.fetchall())]
 
     # --- conversations (RF4) ---
     def update_conversation(self, session_id: int, ip_a: str, ip_b: str, length: int, ts: float) -> None:

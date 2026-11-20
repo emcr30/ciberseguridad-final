@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable
 
-from scapy.all import IPv6
+from scapy.all import IP, TCP, UDP, IPv6, PcapWriter, Raw
 
 from netwatch.analyzers.alerts import Alert, Deduplicator
 from netwatch.analyzers.arp_spoof import ArpSpoofDetector
@@ -21,12 +21,30 @@ from netwatch.scope import in_scope
 DISCARD_IPV6 = "IPv6"
 DISCARD_OUT_OF_SCOPE = "IPv4 fuera de las redes de laboratorio"
 DISCARD_NO_IP = "sin IP (otros)"
+REDACTED = b"[NetWatch: contenido eliminado porque tenia credenciales]"
+
+
+def redact(raw_pkt):
+    """Copy of the packet without its payload, so the session .pcap never keeps a real password."""
+    pkt = raw_pkt.copy()
+    pkt[Raw].load = REDACTED
+    for layer, fields in ((IP, ("len", "chksum")), (TCP, ("chksum",)), (UDP, ("len", "chksum"))):
+        if pkt.haslayer(layer):
+            for name in fields:
+                setattr(pkt[layer], name, None)  # recomputed when written
+    return pkt
 
 
 class Pipeline:
     def __init__(self, networks: list[str], on_packet: Callable[[PacketInfo], None] | None = None,
-                 repo: Repository | None = None, session_id: int | None = None, gateway: str | None = None):
+                 repo: Repository | None = None, session_id: int | None = None, gateway: str | None = None,
+                 pcap_path: Path | None = None):
         self.networks = networks
+        self.pcap_path = pcap_path
+        self._pcap = None
+        if pcap_path:
+            pcap_path.parent.mkdir(parents=True, exist_ok=True)
+            self._pcap = PcapWriter(str(pcap_path), sync=True)
         self.detectors = [ArpSpoofDetector(gateway), PortScanDetector()]
         self.cred_detector = CredentialDetector()
         self.credentials = 0
@@ -60,11 +78,14 @@ class Pipeline:
         for detector in self.detectors:
             for alert in detector.process(info):
                 self._raise(alert)
-        for cred in self.cred_detector.process(info):
+        creds = self.cred_detector.process(info)
+        for cred in creds:
             self.credentials += 1
             if self.repo:
                 self.repo.add_credential(self.session_id, cred)
             self._raise(cred.to_alert())
+        if self._pcap:
+            self._pcap.write(redact(raw_pkt) if creds and raw_pkt.haslayer(Raw) else raw_pkt)
         if self.repo:
             self._store(info)
         if self.on_packet:
@@ -108,15 +129,29 @@ class Pipeline:
 
     def finish(self) -> dict:
         summary = self.summary()
+        if self._pcap:
+            self._pcap.close()
+            self._pcap = None
         if self.repo:
             self.repo.finish_session(self.session_id, summary["total"], summary["discarded"])
         return summary
 
 
+def session_pcap(sessions_dir: Path, session_id: int) -> Path:
+    return sessions_dir / f"session_{session_id}.pcap"
+
+
 def analyze_file(path: Path, networks: list[str], on_packet: Callable | None = None,
-                 repo: Repository | None = None, gateway: str | None = None) -> dict:
-    session_id = repo.create_session("file", path.name) if repo else None
-    pipeline = Pipeline(networks, on_packet, repo, session_id, gateway)
-    for pkt in file_source(path):
-        pipeline.handle(pkt)
-    return pipeline.finish()
+                 repo: Repository | None = None, gateway: str | None = None,
+                 sessions_dir: Path | None = None, name: str | None = None) -> dict:
+    """Analyze a .pcap. Raises (before creating a session) if the file is not a valid capture."""
+    with file_source(path) as reader:
+        session_id = repo.create_session("file", name or path.name) if repo else None
+        pcap_path = session_pcap(sessions_dir, session_id) if sessions_dir and repo else None
+        pipeline = Pipeline(networks, on_packet, repo, session_id, gateway, pcap_path)
+        try:
+            for pkt in reader:
+                pipeline.handle(pkt)
+        finally:  # a file damaged half-way still closes its session
+            summary = pipeline.finish()
+    return summary

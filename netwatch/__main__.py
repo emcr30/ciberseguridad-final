@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import ctypes
-import os
 import sys
 import time
 from pathlib import Path
@@ -12,31 +10,18 @@ from netwatch import config
 from netwatch.legal import WARNING
 
 
-def has_capture_privileges() -> bool:
-    if os.name == "nt":
-        try:
-            return bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            return False
-    return os.geteuid() == 0
-
-
 def cmd_interfaces(_args) -> None:
-    from scapy.all import conf
+    from netwatch.capture.sources import PRIVILEGES_HELP, has_capture_privileges, list_interfaces
 
-    from netwatch.scope import in_scope
-
-    networks = config.load_settings()["networks"]
     print("Interfaces disponibles (* = IP dentro de una red de laboratorio declarada):")
     print(f"    {'NOMBRE':<10} {'IP':<16} MAC")
-    for iface in conf.ifaces.values():
-        mark = "*" if in_scope(iface.ip, networks) else " "
-        print(f"  {mark} {iface.name:<10} {iface.ip or '-':<16} {iface.mac or '-'}")
+    for i in list_interfaces(config.load_settings()["networks"]):
+        mark = "*" if i["in_lab"] else " "
+        print(f"  {mark} {i['name']:<10} {i['ip'] or '-':<16} {i['mac'] or '-'}")
     if has_capture_privileges():
         print("Privilegios de captura: SÍ")
     else:
-        print("Privilegios de captura: NO (Mac: sudo; Windows: Npcap + terminal de administrador). "
-              "El análisis de .pcap sigue disponible.")
+        print(f"Privilegios de captura: NO. {PRIVILEGES_HELP} El análisis de .pcap sigue disponible.")
 
 
 def cmd_config(args) -> None:
@@ -144,7 +129,12 @@ def cmd_analyze(args) -> None:
     repo = Repository()
     try:
         gateway = config.load_settings()["gateway"]
-        summary = analyze_file(path, networks, _packet_printer(args.verbose), repo, gateway)
+        try:
+            summary = analyze_file(path, networks, _packet_printer(args.verbose), repo, gateway,
+                                   config.SESSIONS_DIR)
+        except Exception as exc:  # Scapy raises several types for broken files
+            print(f"Error: no se pudo leer {path} como captura ({exc})")
+            sys.exit(1)
         if args.verbose:
             print()
         _print_summary(summary)
@@ -157,16 +147,18 @@ def cmd_analyze(args) -> None:
 def cmd_capture(args) -> None:
     from netwatch.capture.sources import LiveSource
     from netwatch.db.repository import DB_FILE, Repository
-    from netwatch.pipeline import Pipeline
+    from netwatch.pipeline import Pipeline, session_pcap
 
     networks = _require_networks()
     repo = Repository()
-    pipeline = Pipeline(networks, _packet_printer(args.verbose), repo, repo.create_session("live", args.iface),
-                        config.load_settings()["gateway"])
+    sid = repo.create_session("live", args.iface)
+    pipeline = Pipeline(networks, _packet_printer(args.verbose), repo, sid, config.load_settings()["gateway"],
+                        session_pcap(config.SESSIONS_DIR, sid))
     source = LiveSource(args.iface, pipeline.handle)
     try:
         source.start()
     except RuntimeError as exc:
+        source.stop()
         pipeline.finish()
         repo.close()
         print(f"Error: {exc}")
@@ -197,6 +189,23 @@ def cmd_db(_args) -> None:
     repo.close()
 
 
+def cmd_web(args) -> None:
+    import socket
+
+    from netwatch.web.app import create_app
+
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", args.port))
+        except OSError:
+            print(f"Error: el puerto {args.port} está ocupado. En macOS el 5000 lo usa el 'Receptor AirPlay' "
+                  "(Ajustes del Sistema > General > AirDrop y Handoff). "
+                  f"Desactívelo o use otro puerto: python -m netwatch web --port {args.port + 1}")
+            sys.exit(1)
+    print(f"Panel en http://127.0.0.1:{args.port}  (solo acceso local; Ctrl+C para salir)")
+    create_app().run(host="127.0.0.1", port=args.port, threaded=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="netwatch", description="NetWatch - analizador defensivo")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -221,6 +230,10 @@ def main() -> None:
     p_cap.set_defaults(func=cmd_capture)
 
     sub.add_parser("db", help="Mostrar filas por tabla en la base de datos").set_defaults(func=cmd_db)
+
+    p_web = sub.add_parser("web", help="API y panel web en 127.0.0.1")
+    p_web.add_argument("--port", type=int, default=5000)
+    p_web.set_defaults(func=cmd_web)
 
     args = parser.parse_args()
     print(WARNING, end="\n\n")
