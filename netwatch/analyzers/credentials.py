@@ -43,7 +43,8 @@ class Credential:
         return Alert(self.ts, "CLEARTEXT_CREDENTIALS", SEVERITY_HIGH,
                      f"{self.protocol}:{self.src_ip}->{self.dst_ip}:{user}",
                      f"Credenciales {self.protocol} en texto plano: usuario '{user}', "
-                     f"contraseña {self.password_masked} ({self.src_ip} → {self.dst_ip}:{self.dport})")
+                     f"contraseña {self.password_masked} ({self.src_ip} → {self.dst_ip}:{self.dport})",
+                     src_ip=self.src_ip)
 
 
 class CredentialDetector:

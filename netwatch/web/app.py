@@ -1,4 +1,4 @@
-"""Flask JSON API (RF1, RF2, RF13). Listens only on 127.0.0.1."""
+"""Flask JSON API (RF1, RF2, RF13) and web panel (RF10, RF11, RF15). Listens only on 127.0.0.1."""
 from __future__ import annotations
 
 import csv
@@ -6,6 +6,7 @@ import io
 import ipaddress
 import json
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -23,6 +24,13 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 PCAP_EXTENSIONS = {".pcap", ".pcapng", ".cap"}
 MAX_UPLOAD_MB = 100
 CSV_FORMULA_CHARS = ("=", "+", "-", "@", "\t", "\r")
+# Only local files: Chart.js is served from static/, no CDN, no inline scripts.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                               "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
 
 
 class CaptureState:
@@ -46,6 +54,11 @@ def _csv_cell(value):
     if isinstance(value, str) and value.startswith(CSV_FORMULA_CHARS):
         return "'" + value
     return value
+
+
+def _with_datetime(rows: list[dict]) -> list[dict]:
+    """Add a readable local date-time (fecha_hora) next to the epoch timestamp ts."""
+    return [{"fecha_hora": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r["ts"])), **r} for r in rows]
 
 
 def _csv_response(rows: list[dict], columns: list[str], filename: str) -> Response:
@@ -90,6 +103,15 @@ def create_app(data_dir: Path = config.DATA_DIR) -> Flask:
         if request.method == "POST" and origin and urlparse(origin).hostname not in LOCAL_HOSTS:
             return _error("Origen no permitido.", 403)
         return None
+
+    @app.after_request
+    def security_headers(response):
+        response.headers.update(SECURITY_HEADERS)
+        return response
+
+    @app.get("/")
+    def index():
+        return app.send_static_file("index.html")
 
     @app.errorhandler(413)
     def too_large(_e):
@@ -252,15 +274,16 @@ def create_app(data_dir: Path = config.DATA_DIR) -> Flask:
     def export(kind):
         def build(sid):
             if kind == "alerts.json":
-                body = json.dumps(repo.alerts(sid), ensure_ascii=False, indent=2)
+                body = json.dumps(_with_datetime(repo.alerts(sid)), ensure_ascii=False, indent=2)
                 return Response(body, mimetype="application/json",
                                 headers={"Content-Disposition": f"attachment; filename=alertas_{sid}.json"})
             if kind == "alerts.csv":
-                return _csv_response(repo.alerts(sid), ["id", "ts", "type", "severity", "detail"],
+                return _csv_response(_with_datetime(repo.alerts(sid)),
+                                     ["id", "fecha_hora", "ts", "type", "severity", "src_ip", "detail"],
                                      f"alertas_{sid}.csv")
             if kind == "packets.csv":
-                rows = list(reversed(repo.filter_packets(sid, limit=MAX_PACKETS)))
-                cols = ["id", "ts", "protocol", "src_mac", "dst_mac", "src_ip", "dst_ip", "sport", "dport",
+                rows = _with_datetime(list(reversed(repo.filter_packets(sid, limit=MAX_PACKETS))))
+                cols = ["id", "fecha_hora", "ts", "protocol", "src_mac", "dst_mac", "src_ip", "dst_ip", "sport", "dport",
                         "length", "tcp_flags"]
                 return _csv_response(rows, cols, f"paquetes_{sid}.csv")
             if kind == "session.pcap":

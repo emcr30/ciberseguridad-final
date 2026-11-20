@@ -219,3 +219,43 @@ def test_rejects_non_local_host_and_cross_origin_post(client):
     assert client.get("/api/status", headers={"Host": "evil.example"}).status_code == 403
     r = client.post("/api/settings", json={"warning_accepted": True}, headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
+
+
+# --- fecha_hora and src_ip in exports ---
+
+def test_exports_have_fecha_hora_and_src_ip(ready, samples):
+    import time
+    upload(ready, samples / "port_scan.pcap")
+    rows = list(csv.DictReader(io.StringIO(ready.get("/api/export/alerts.csv").data.decode())))
+    assert list(rows[0])[:6] == ["id", "fecha_hora", "ts", "type", "severity", "src_ip"]
+    assert rows[0]["src_ip"] == "192.168.56.66"
+    expected = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(rows[0]["ts"])))
+    assert rows[0]["fecha_hora"] == expected
+    data = json.loads(ready.get("/api/export/alerts.json").data)
+    assert data[0]["fecha_hora"] == expected and data[0]["src_ip"] == "192.168.56.66"
+    pkts = list(csv.DictReader(io.StringIO(ready.get("/api/export/packets.csv").data.decode())))
+    assert list(pkts[0])[:3] == ["id", "fecha_hora", "ts"]
+    assert pkts[0]["fecha_hora"] == time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(pkts[0]["ts"])))
+
+
+def test_alert_src_ip_per_detector(ready, samples):
+    for name, expected in [("arp_spoof.pcap", {"192.168.56.1", "192.168.56.20"}),
+                           ("creds.pcap", {"192.168.56.20"})]:
+        upload(ready, samples / name)
+        assert {a["src_ip"] for a in ready.get("/api/alerts").get_json()} == expected
+
+
+def test_old_database_gets_src_ip_column(tmp_path):
+    import sqlite3
+    from netwatch.db.repository import Repository
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)  # alerts table as it was before src_ip existed
+    conn.execute("CREATE TABLE alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, "
+                 "ts REAL NOT NULL, type TEXT NOT NULL, severity TEXT NOT NULL, detail TEXT NOT NULL)")
+    conn.execute("INSERT INTO alerts (session_id, ts, type, severity, detail) VALUES (1, 1.0, 'X', 'alta', 'vieja')")
+    conn.commit()
+    conn.close()
+    repo = Repository(db)
+    repo.add_alert(1, 2.0, "Y", "alta", "nueva", "192.168.56.9")
+    assert [(a["detail"], a["src_ip"]) for a in repo.alerts(1)] == [("vieja", None), ("nueva", "192.168.56.9")]
+    repo.close()

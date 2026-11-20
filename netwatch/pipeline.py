@@ -101,7 +101,8 @@ class Pipeline:
             return
         self.alerts.append(alert)
         if self.repo:
-            alert.id = self.repo.add_alert(self.session_id, alert.ts, alert.type, alert.severity, alert.detail)
+            alert.id = self.repo.add_alert(self.session_id, alert.ts, alert.type, alert.severity, alert.detail,
+                                           alert.src_ip)
         else:
             alert.id = len(self.alerts)
 

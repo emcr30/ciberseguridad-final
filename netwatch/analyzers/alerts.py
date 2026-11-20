@@ -15,6 +15,7 @@ class Alert:
     severity: str
     subject: str       # what the alert is about (IP or MAC); used to de-duplicate
     detail: str
+    src_ip: str | None = None  # source IP of the packet that raised the alert
     id: int | None = None  # set once stored; later changes to `detail` update that row
 
 

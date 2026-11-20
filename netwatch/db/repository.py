@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     ts REAL NOT NULL,
     type TEXT NOT NULL,
     severity TEXT NOT NULL,
-    detail TEXT NOT NULL
+    detail TEXT NOT NULL,
+    src_ip TEXT
 );
 CREATE TABLE IF NOT EXISTS credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +81,10 @@ class Repository:
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        # Databases created before alerts had src_ip get the column added (no data is lost).
+        if "src_ip" not in {r["name"] for r in self.conn.execute("PRAGMA table_info(alerts)")}:
+            self.conn.execute("ALTER TABLE alerts ADD COLUMN src_ip TEXT")
+            self.conn.commit()
         self.max_packets = max_packets
         self._lock = threading.Lock()
         self._buffer: list[tuple] = []
@@ -217,11 +222,12 @@ class Repository:
             return [dict(r) for r in rows]
 
     # --- alerts (RF12) ---
-    def add_alert(self, session_id: int, ts: float, type_: str, severity: str, detail: str) -> int:
+    def add_alert(self, session_id: int, ts: float, type_: str, severity: str, detail: str,
+                  src_ip: str | None = None) -> int:
         with self._lock:
             cur = self.conn.execute(
-                "INSERT INTO alerts (session_id, ts, type, severity, detail) VALUES (?, ?, ?, ?, ?)",
-                (session_id, ts, type_, severity, detail))
+                "INSERT INTO alerts (session_id, ts, type, severity, detail, src_ip) VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, ts, type_, severity, detail, src_ip))
             return cur.lastrowid
 
     def update_alert_detail(self, alert_id: int, detail: str) -> None:

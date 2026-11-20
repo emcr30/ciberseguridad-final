@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NetWatch</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- RF15: advertencia siempre visible -->
+  <header id="banner" class="banner">
+    <p id="warning-text">ADVERTENCIA: capture tráfico únicamente en redes propias o autorizadas.</p>
+    <label id="accept-box"><input type="checkbox" id="accept-warning"> Acepto: solo capturaré en redes propias o autorizadas</label>
+  </header>
+
+  <main>
+    <h1>NetWatch <small>Analizador de tráfico y detector de ARP spoofing</small></h1>
+    <p id="message" class="message" role="status"></p>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Redes de laboratorio</h2>
+        <p class="hint">Solo se analizan los paquetes de estas redes (una por línea, formato CIDR).</p>
+        <textarea id="networks" rows="3" placeholder="192.168.56.0/24"></textarea>
+        <label>Gateway <input id="gateway" placeholder="192.168.56.1"></label>
+        <button id="save-settings">Guardar configuración</button>
+      </div>
+
+      <div class="card">
+        <h2>Captura</h2>
+        <p>Privilegios de captura: <strong id="privileges">—</strong></p>
+        <label>Interfaz <select id="iface"></select></label>
+        <div class="row">
+          <button id="capture-start">Iniciar captura</button>
+          <button id="capture-stop" class="secondary">Detener</button>
+          <span id="capture-state" class="pill">Detenida</span>
+        </div>
+        <h3>Analizar archivo .pcap</h3>
+        <div class="row">
+          <input type="file" id="pcap-file" accept=".pcap,.pcapng,.cap">
+          <button id="upload">Analizar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row spread">
+        <label>Sesión <select id="session"><option value="">Última (automático)</option></select></label>
+        <div class="row" id="exports">
+          <span>Exportar:</span>
+          <a class="button secondary" data-export="alerts.csv">Alertas CSV</a>
+          <a class="button secondary" data-export="alerts.json">Alertas JSON</a>
+          <a class="button secondary" data-export="packets.csv">Paquetes CSV</a>
+          <a class="button secondary" data-export="session.pcap">Captura .pcap</a>
+        </div>
+      </div>
+      <div class="counters">
+        <div><span id="c-total">0</span>paquetes</div>
+        <div><span id="c-analyzed">0</span>analizados</div>
+        <div><span id="c-discarded">0</span>descartados</div>
+        <div><span id="c-alerts">0</span>alertas</div>
+        <div><span id="c-credentials">0</span>credenciales</div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card"><h2>Paquetes por segundo</h2><div class="chart"><canvas id="pps-chart"></canvas></div></div>
+      <div class="card"><h2>Por protocolo</h2><div class="chart"><canvas id="proto-chart"></canvas></div></div>
+    </section>
+
+    <section class="card">
+      <h2>Alertas</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Hora</th><th>Severidad</th><th>Tipo</th><th>Detalle</th></tr></thead>
+        <tbody id="alerts-body"></tbody>
+      </table></div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Conversaciones</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>IP A</th><th>IP B</th><th>Paquetes</th><th>Bytes</th></tr></thead>
+          <tbody id="conversations-body"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>Tabla IP ↔ MAC</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>IP</th><th>MAC</th><th>Primera vez</th><th>Última vez</th></tr></thead>
+          <tbody id="ipmac-body"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Credenciales en texto plano</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Hora</th><th>Protocolo</th><th>Origen</th><th>Destino</th><th>Usuario</th><th>Contraseña</th></tr></thead>
+        <tbody id="credentials-body"></tbody>
+      </table></div>
+    </section>
+
+    <section class="card">
+      <h2>Paquetes</h2>
+      <form id="packet-filters" class="row">
+        <input id="f-ip" placeholder="IP (ej. 192.168.56.10)">
+        <input id="f-protocol" placeholder="Protocolo (ej. HTTP)">
+        <input id="f-port" placeholder="Puerto (ej. 80)" inputmode="numeric">
+        <button type="submit">Filtrar</button>
+        <button type="reset" class="secondary">Limpiar</button>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Hora</th><th>Protocolo</th><th>Origen</th><th>Destino</th><th>Flags</th><th>Bytes</th></tr></thead>
+        <tbody id="packets-body"></tbody>
+      </table></div>
+    </section>
+  </main>
+
+  <script src="/static/chart.umd.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

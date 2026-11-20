@@ -35,13 +35,13 @@ class ArpSpoofDetector:
         if len(macs) >= 2:
             alerts.append(Alert(ts, "ARP_SPOOFING", SEVERITY_HIGH, ip,
                                 f"La IP {ip} aparece con {len(macs)} MAC distintas en "
-                                f"{self.window:g} s: {', '.join(macs)}"))
+                                f"{self.window:g} s: {', '.join(macs)}", src_ip=ip))
             if ip == self.gateway:
                 alerts.append(Alert(ts, "MITM", SEVERITY_CRITICAL, f"gateway:{ip}",
                                     f"Posible MITM: conflicto ARP sobre el gateway {ip} "
-                                    f"(MAC: {', '.join(macs)}). Última MAC: {mac}"))
+                                    f"(MAC: {', '.join(macs)}). Última MAC: {mac}", src_ip=ip))
         if len(ips) >= 2:
             alerts.append(Alert(ts, "MITM", SEVERITY_CRITICAL, f"mac:{mac}",
                                 f"Posible MITM: la MAC {mac} reclama {len(ips)} IPs en "
-                                f"{self.window:g} s: {', '.join(ips)}"))
+                                f"{self.window:g} s: {', '.join(ips)}", src_ip=ip))
         return alerts

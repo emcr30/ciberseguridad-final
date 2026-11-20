@@ -62,7 +62,7 @@ class PortScanDetector:
         if len(pair.recent) >= self.threshold:
             pair.scanned = set(pair.recent)
             pair.alert = Alert(ts, "PORT_SCAN", SEVERITY_HIGH, f"{info.src_ip}->{info.dst_ip}",
-                               self._detail(info.src_ip, info.dst_ip, pair))
+                               self._detail(info.src_ip, info.dst_ip, pair), src_ip=info.src_ip)
             return [pair.alert]
         return []
 
